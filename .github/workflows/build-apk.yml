@@ -8,35 +8,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download source
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Extract Android project
         run: |
           unzip -q GasStockManager_V1.zip
-          find . -name settings.gradle.kts -print
-
-      - name: Find project folder
-        id: project
-        run: |
           PROJECT_DIR=$(dirname "$(find . -name settings.gradle.kts -print -quit)")
-          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Project directory: $PROJECT_DIR"
 
-      - name: Enable AndroidX
+      - name: Fix Gradle configuration
         run: |
-          cd "${{ steps.project.outputs.dir }}"
-          cat > gradle.properties <<'EOF'
+          cat > "$PROJECT_DIR/gradle.properties" <<'EOF'
           android.useAndroidX=true
           android.enableJetifier=true
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          kotlin.code.style=official
           EOF
 
-      - name: Fix Android build configuration
-        run: |
-          cd "${{ steps.project.outputs.dir }}"
-
-          cat > app/build.gradle.kts <<'EOF'
+          cat > "$PROJECT_DIR/app/build.gradle.kts" <<'EOF'
           plugins {
               id("com.android.application")
               id("org.jetbrains.kotlin.android")
@@ -60,25 +51,27 @@ jobs:
                   targetCompatibility = JavaVersion.VERSION_17
               }
 
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-
               buildFeatures {
                   compose = true
               }
           }
 
+          kotlin {
+              jvmToolchain(17)
+
+              compilerOptions {
+                  jvmTarget.set(
+                      org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+                  )
+              }
+          }
+
           dependencies {
               implementation(platform("androidx.compose:compose-bom:2025.01.00"))
-
               implementation("androidx.activity:activity-compose:1.10.1")
-
               implementation("androidx.compose.material3:material3")
-
               implementation("androidx.compose.ui:ui")
               implementation("androidx.compose.ui:ui-tooling-preview")
-
               debugImplementation("androidx.compose.ui:ui-tooling")
           }
           EOF
@@ -95,27 +88,29 @@ jobs:
       - name: Install Android SDK
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
+      - name: Show versions
+        run: |
+          java -version
+          gradle --version
+
       - name: Build Debug APK
         run: |
-          cd "${{ steps.project.outputs.dir }}"
+          cd "$PROJECT_DIR"
           gradle clean assembleDebug --no-daemon --stacktrace
 
       - name: Find APK
         run: |
-          find . -name "*.apk" -type f -print
+          find "$PROJECT_DIR" -name "app-debug.apk" -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: GasStockManager-APK
           path: "**/app/build/outputs/apk/debug/app-debug.apk"
-          if-no-files-found: error
